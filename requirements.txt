@@ -1,0 +1,6 @@
+pandas
+plotly
+sqlite3
+sys
+os
+pydeck
