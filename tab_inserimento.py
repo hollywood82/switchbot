@@ -7,6 +7,9 @@ import pandas as pd
 from config import DB_PATH
 from database import get_connection, update_schema_dynamic, clean_column_name
 from importer import parse_date, clean_value
+from shapely.geometry import Point
+from shapely.wkt import loads  # Se la geometria è salvata come testo (WKT)
+# import shapely.wkb as wkb   # Se la geometria è salvata come BLOB binario (WKB)
 
 
 def resolve_path(relative_path):
@@ -37,17 +40,63 @@ def get_next_free_id():
     except Exception:
         return "01"
 
+def get_closest_comune_and_provincia(lat, lon):
+    """
+    Trova provincia e comune leggendo la geometria WKT in EPSG:4326.
+    X = Longitudine (~7 per il Piemonte), Y = Latitudine (~45 per il Piemonte)
+    """
+    try:
+        conn = get_connection()
+        query = "SELECT provin_nom, comune_nom, geometry FROM limiti_amministrativi"
+        df_limiti = pd.read_sql_query(query, conn)
+        conn.close()
+        
+        if df_limiti.empty:
+            return "DB vuoto", "DB vuoto"
+            
+        # IMPORTANTE: Shapely vuole Point(X, Y) -> Point(Longitudine, Latitudine)
+        punto_cliccato = Point(lon, lat)
+        
+        comune_piu_vicino = None
+        distanza_minima = float('inf')
+        
+        for _, row in df_limiti.iterrows():
+            geom_wkt = row['geometry']
+            if not geom_wkt:
+                continue
+                
+            try:
+                poligono = loads(str(geom_wkt))
+                
+                # 1. Tentativo di contenimento esatto
+                if poligono.contains(punto_cliccato):
+                    return str(row['provin_nom']).strip(), str(row['comune_nom']).strip()
+                
+                # 2. Calcolo distanza di sicurezza (fallback)
+                distanza = punto_cliccato.distance(poligono)
+                if distanza < distanza_minima:
+                    distanza_minima = distanza
+                    comune_piu_vicino = (str(row['provin_nom']).strip(), str(row['comune_nom']).strip())
+            except Exception:
+                continue
+                
+        # Se il click è leggermente fuori dal bordo del poligono (tolleranza ~4km)
+        if comune_piu_vicino and distanza_minima < 0.04:
+            return comune_piu_vicino[0], comune_piu_vicino[1]
+            
+    except Exception as e:
+        st.error(f"Errore nell'elaborazione geometrica: {e}")
+        
+    return "Non rilevata", "Non rilevato"
+
 def main_insert():
-    # 1. INIZIALIZZAZIONE: Impostiamo di default "crea_stazione" per vederla subito all'avvio
     if "sotto_sezione" not in st.session_state:
         st.session_state.sotto_sezione = "crea_stazione"
 
     st.subheader("🛠️ Pannello Gestione Dati e Stazioni")
     st.markdown("Seleziona l'operazione che desideri effettuare:")
 
-    # Triplo bottone (usiamo tre colonne affiancate)
     col_btn1, col_btn2, col_btn3 = st.columns(3)
-
     with col_btn1:
         azione_crea = st.button("➕ Crea Nuova Stazione", use_container_width=True, type="primary")
     with col_btn2:
@@ -55,7 +104,6 @@ def main_insert():
     with col_btn3:
         azione_rinomina = st.button("✏️ Rinomina Stazione", use_container_width=True, type="primary")
         
-    # Assegnazione della sotto-sezione in base al click
     if azione_crea:
         st.session_state.sotto_sezione = "crea_stazione"
     if azione_carica:
@@ -70,63 +118,93 @@ def main_insert():
         
         id_proposto = get_next_free_id()
         
-        # Creiamo un layout a due colonne: Mappa a sinistra, Form a destra
+        # Inizializzazione dello stato al primo caricamento (Centro Piemonte come default)
+        if "lat_cliccata" not in st.session_state:
+            st.session_state.lat_cliccata = 45.04
+            st.session_state.lon_cliccata = 7.68
+            st.session_state.provincia_rilevata = ""
+            st.session_state.comune_rilevato = ""
+            st.session_state.ha_cliccato = False
+
         col_mappa, col_form = st.columns([1.2, 1])
         
         with col_mappa:
             st.markdown("**📍 Clicca sulla mappa per selezionare la posizione:**")
             
-            # Mappa Folium di partenza centrata sull'Italia
-            m = folium.Map(location=[45.0, 7.5], zoom_start=8)
-            m.add_child(folium.ClickForMarker(popup="Nuova Stazione"))
+            # Mappa centrata sulle coordinate correnti dello stato
+            m = folium.Map(location=[st.session_state.lat_cliccata, st.session_state.lon_cliccata], zoom_start=8)
             
-            # Renderizziamo la mappa. Restituisce i dati in tempo reale
+            if st.session_state.ha_cliccato:
+                folium.Marker(
+                    [st.session_state.lat_cliccata, st.session_state.lon_cliccata],
+                    popup=f"{st.session_state.comune_rilevato} ({st.session_state.provincia_rilevata})",
+                    icon=folium.Icon(color="red", icon="info-sign")
+                ).add_to(m)
+            
             mappa_output = st_folium(m, height=400, use_container_width=True, key="mappa_creazione")
         
-        # Estraiamo le coordinate cliccate se presenti, altrimenti usiamo valori di default
-        lat_cliccata = 45.0
-        lon_cliccata = 7.5
+        # Intercettiamo il click in tempo reale
         if mappa_output and mappa_output.get("last_clicked"):
-            lat_cliccata = mappa_output["last_clicked"]["lat"]
-            lon_cliccata = mappa_output["last_clicked"]["lng"]
+            click_lat = mappa_output["last_clicked"]["lat"]
+            click_lon = mappa_output["last_clicked"]["lng"]
+            
+            # Se le coordinate differiscono da quelle in memoria, l'utente ha fatto un nuovo click
+            if click_lat != st.session_state.lat_cliccata or click_lon != st.session_state.lon_cliccata:
+                st.session_state.lat_cliccata = click_lat
+                st.session_state.lon_cliccata = click_lon
+                st.session_state.ha_cliccato = True
+                
+                # Eseguiamo la query passando correttamente (Lat, Lon) alla nostra funzione
+                prov, com = get_closest_comune_and_provincia(click_lat, click_lon)
+                
+                st.session_state.provincia_rilevata = prov
+                st.session_state.comune_rilevato = com
+                st.rerun() # Forza l'aggiornamento immediato dei campi di testo
             
         with col_form:
             st.markdown("**📝 Dati Stazione:**")
-            # Usiamo un form Streamlit classico affiancato alla mappa
-            with st.form("form_nuova_stazione", clear_on_submit=True):
-                nuovo_id = st.text_input("ID Sensore:", value=id_proposto)
-                nuovo_nome = st.text_input("Nome Stazione / Posizione:", placeholder="es. Salone, Serra Nord")
-                nuovo_prov = st.text_input("Provincia", placeholder="es. Alessandria, Asti")
-                nuovo_com = st.text_input("Comune", placeholder="es. Condove, Torino")
-                
-                # Campi coordinate aggiornati in tempo reale dal click sulla mappa
-                nuova_lat = st.number_input("Latitudine:", format="%.6f", value=lat_cliccata)
-                nuova_lon = st.number_input("Longitudine:", format="%.6f", value=lon_cliccata)
-                
-                submit_stazione = st.form_submit_button("Registra Stazione", use_container_width=True)
-                
-                if submit_stazione:
-                    if nuovo_id.strip() == "" or nuovo_nome.strip() == "":
-                        st.error("L'ID e il Nome del sensore sono obbligatori.")
-                    else:
-                        try:
-                            conn = sqlite3.connect(resolve_path('sensori.db'))
-                            cursor = conn.cursor()
-                            cursor.execute(
-                                "INSERT INTO sensori (id, nome, lat, lon) VALUES (?, ?, ?, ?)",
-                                (nuovo_id, nuovo_nome, nuova_lat, nuova_lon)
-                            )
-                            conn.commit()
-                            conn.close()
-                            st.success(f"Stazione '{nuovo_nome}' creata!")
-                            
-                            st.session_state.sotto_sezione = None
-                            st.cache_data.clear() 
-                            st.rerun()
-                        except sqlite3.IntegrityError:
-                            st.error("Errore: Esiste già una stazione con questo ID.")
-                        except Exception as e:
-                            st.error(f"Errore nel salvataggio: {e}")
+            
+            nuovo_id = st.text_input("ID Sensore:", value=id_proposto)
+            nuovo_nome = st.text_input("Nome Stazione / Posizione:", placeholder="es. Salone, Serra Nord")
+            
+            # Input di testo collegati direttamente alle variabili aggiornate dallo st.rerun()
+            nuova_provincia = st.text_input("Provincia:", value=st.session_state.provincia_rilevata)
+            nuovo_comune = st.text_input("Comune:", value=st.session_state.comune_rilevato)
+            
+            nuova_lat_input = st.number_input("Latitudine:", format="%.6f", value=st.session_state.lat_cliccata)
+            nuova_lon_input = st.number_input("Longitudine:", format="%.6f", value=st.session_state.lon_cliccata)
+            
+            submit_stazione = st.button("Registra Stazione", use_container_width=True, type="primary")
+            
+            if submit_stazione:
+                if nuovo_id.strip() == "" or nuovo_nome.strip() == "":
+                    st.error("L'ID e il Nome del sensore sono obbligatori.")
+                else:
+                    try:
+                        conn = sqlite3.connect(resolve_path('sensori.db'))
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            "INSERT INTO sensori (id, nome, lat, lon, provincia, comune) VALUES (?, ?, ?, ?, ?, ?)",
+                            (nuovo_id, nuovo_nome, nuova_lat_input, nuova_lon_input, nuova_provincia, nuovo_comune)
+                        )
+                        conn.commit()
+                        conn.close()
+                        st.success(f"Stazione '{nuovo_nome}' creata con successo!")
+                        
+                        # Reset dello stato temporaneo geografico
+                        del st.session_state.lat_cliccata
+                        del st.session_state.lon_cliccata
+                        del st.session_state.provincia_rilevata
+                        del st.session_state.comune_rilevato
+                        del st.session_state.ha_cliccato
+                        
+                        st.session_state.sotto_sezione = None
+                        st.cache_data.clear() 
+                        st.rerun()
+                    except sqlite3.IntegrityError:
+                        st.error("Errore: Esiste già una stazione con questo ID.")
+                    except Exception as e:
+                        st.error(f"Errore nel salvataggio: {e}")
     
     # --- FORM 2: CARICAMENTO FILE CSV ---
     elif st.session_state.sotto_sezione == "carica_csv":
