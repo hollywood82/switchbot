@@ -48,10 +48,10 @@ def main_insert():
     # Triplo bottone (usiamo tre colonne affiancate)
     col_btn1, col_btn2, col_btn3 = st.columns(3)
 
-    with col_btn2:
-        azione_carica = st.button("📥 Carica Dati (CSV)", use_container_width=True, type="primary")
     with col_btn1:
         azione_crea = st.button("➕ Crea Nuova Stazione", use_container_width=True, type="primary")
+    with col_btn2:
+        azione_carica = st.button("📥 Carica Dati (CSV)", use_container_width=True, type="primary")
     with col_btn3:
         azione_rinomina = st.button("✏️ Rinomina Stazione", use_container_width=True, type="primary")
         
