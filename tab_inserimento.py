@@ -96,6 +96,8 @@ def main_insert():
             with st.form("form_nuova_stazione", clear_on_submit=True):
                 nuovo_id = st.text_input("ID Sensore:", value=id_proposto)
                 nuovo_nome = st.text_input("Nome Stazione / Posizione:", placeholder="es. Salone, Serra Nord")
+                nuovo_prov = st.text_input("Provincia", placeholder="es. Alessandria, Asti")
+                nuovo_com = st.text_input("Comune", placeholder="es. Condove, Torino")
                 
                 # Campi coordinate aggiornati in tempo reale dal click sulla mappa
                 nuova_lat = st.number_input("Latitudine:", format="%.6f", value=lat_cliccata)
