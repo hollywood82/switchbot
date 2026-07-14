@@ -3,3 +3,4 @@ plotly
 pydeck
 folium
 streamlit_folium
+psycopg2
