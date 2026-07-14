@@ -3,4 +3,4 @@ plotly
 pydeck
 folium
 streamlit_folium
-psycopg2
+psycopg2-binary
