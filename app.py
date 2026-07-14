@@ -11,7 +11,7 @@ import json
 from viewer_wms import show_dashboard
 
 # --- IMPOSTAZIONI DELLA PAGINA ---
-st.set_page_config(page_title="CHE TEMPO CHE FA", page_icon="🌐", layout="wide")
+st.set_page_config(page_title="CHE CALDO CHE FA", page_icon="🌐", layout="wide")
 
 # --- CONNESSIONE A NEON POSTGRESQL ---
 DB_URL = "postgresql://neondb_owner:npg_Ke0s4DdLlJUS@ep-rough-shape-zalohu9u.c-2.eu-west-2.aws.neon.tech/neondb?sslmode=require"
