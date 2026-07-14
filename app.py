@@ -170,7 +170,7 @@ if not st.session_state.logged_in:
     st.markdown(
         """
         <div style="text-align: center;">
-            <h1 style="margin-bottom: 5px; color: #1E3A8A; font-weight: bold;">CHE TEMPO CHE FA</h1>
+            <h1 style="margin-bottom: 5px; color: #1E3A8A; font-weight: bold;">CHE CALDO CHE FA</h1>
             <p style="font-size: 1.25rem; color: #666; margin-top: 0;">DATI NOSTRI, SPAZI DI TUTTI.</p>
         </div>
         """, 
