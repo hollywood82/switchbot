@@ -19,9 +19,32 @@ PALETTE = px.colors.qualitative.Plotly
 # Raccomandazione: In produzione, usa st.secrets invece della stringa in chiaro
 POSTGRES_URI = "postgresql://neondb_owner:npg_Ke0s4DdLlJUS@ep-rough-shape-zalohu9u.c-2.eu-west-2.aws.neon.tech/neondb?sslmode=require"
 
+# Endpoint "pooler" di Neon: usa PgBouncer lato Neon, apre le connessioni molto più
+# velocemente rispetto all'endpoint diretto. Se l'host non ha già "-pooler" lo aggiungiamo.
+def _to_pooler_uri(uri: str) -> str:
+    if "-pooler" in uri:
+        return uri
+    return uri.replace(".neon.tech", "-pooler.neon.tech")
+
+POSTGRES_URI_POOLED = _to_pooler_uri(POSTGRES_URI)
+
+
+@st.cache_resource
+def get_connection_pool():
+    """Pool di connessioni riutilizzato per tutta la sessione dell'app,
+    invece di aprire/chiudere una connessione ad ogni rerun di Streamlit."""
+    from psycopg2 import pool
+    return pool.SimpleConnectionPool(1, 5, POSTGRES_URI_POOLED)
+
+
 def get_postgres_connection():
-    """Ritorna una connessione pulita a PostgreSQL Neon"""
-    return psycopg2.connect(POSTGRES_URI)
+    """Ritorna una connessione presa dal pool condiviso (va rilasciata con release_postgres_connection)."""
+    return get_connection_pool().getconn()
+
+
+def release_postgres_connection(conn):
+    """Rilascia la connessione al pool invece di chiuderla."""
+    get_connection_pool().putconn(conn)
 
 def hex_to_rgb(hex_color, alpha=200):
     hex_color = hex_color.lstrip('#')
@@ -48,7 +71,7 @@ def load_data():
         'FROM "misure"', 
         conn
     )
-    conn.close()
+    release_postgres_connection(conn)
     
     df_misure_raw['timestamp'] = pd.to_datetime(df_misure_raw['timestamp'])
     df_misure = df_misure_raw.melt(
@@ -58,6 +81,20 @@ def load_data():
         value_name='valore'
     )
     return df_sensori, df_misure
+
+
+@st.cache_data(ttl=600)
+def load_stazioni_meteo():
+    """Cachata: prima evitava una query+connessione nuova ad ogni singolo
+    rerun di Streamlit (ogni click, ogni filtro cambiato)."""
+    conn = get_postgres_connection()
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute('SELECT id, name, latitude, longitude, altitude, province, station_type FROM "stazioni_meteo" WHERE active = 1')
+        return cursor.fetchall()
+    finally:
+        release_postgres_connection(conn)
+
 
 # TRASFORMIAMO L'INTERA APP IN UNA FUNZIONE COSI DA POTERLA IMPORTARE
 def show_dashboard():
@@ -287,12 +324,7 @@ def show_dashboard():
                 # Rete TorinoMeteo (Aggiornato per leggere da Postgres Neon)
                 fg_torinometeo = folium.FeatureGroup(name="Stazioni TorinoMeteo", show=True)
                 try:
-                    conn = get_postgres_connection()
-                    # Utilizziamo RealDictCursor per simulare il comportamento di sqlite3.Row (accesso per nome colonna)
-                    cursor = conn.cursor(cursor_factory=RealDictCursor)
-                    cursor.execute('SELECT id, name, latitude, longitude, altitude, province, station_type FROM "stazioni_meteo" WHERE active = 1')
-                    lista_stazioni = cursor.fetchall()
-                    conn.close()
+                    lista_stazioni = load_stazioni_meteo()
 
                     if lista_stazioni:
                         for st_info in lista_stazioni:
