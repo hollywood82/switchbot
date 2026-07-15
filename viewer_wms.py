@@ -19,22 +19,13 @@ PALETTE = px.colors.qualitative.Plotly
 # Raccomandazione: In produzione, usa st.secrets invece della stringa in chiaro
 POSTGRES_URI = "postgresql://neondb_owner:npg_Ke0s4DdLlJUS@ep-rough-shape-zalohu9u.c-2.eu-west-2.aws.neon.tech/neondb?sslmode=require"
 
-# Endpoint "pooler" di Neon: usa PgBouncer lato Neon, apre le connessioni molto più
-# velocemente rispetto all'endpoint diretto. Se l'host non ha già "-pooler" lo aggiungiamo.
-def _to_pooler_uri(uri: str) -> str:
-    if "-pooler" in uri:
-        return uri
-    return uri.replace(".neon.tech", "-pooler.neon.tech")
-
-POSTGRES_URI_POOLED = _to_pooler_uri(POSTGRES_URI)
-
 
 @st.cache_resource
 def get_connection_pool():
     """Pool di connessioni riutilizzato per tutta la sessione dell'app,
     invece di aprire/chiudere una connessione ad ogni rerun di Streamlit."""
     from psycopg2 import pool
-    return pool.SimpleConnectionPool(1, 5, POSTGRES_URI_POOLED)
+    return pool.SimpleConnectionPool(1, 5, POSTGRES_URI)
 
 
 def get_postgres_connection():
